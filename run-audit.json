@@ -1,0 +1,314 @@
+{
+  "结论": "LongCat 独立生成已完成；存在流程偏差，不能标为全部约束通过。",
+  "生成主体": {
+    "harness": "2.1.317 (Claude Code)",
+    "model": "LongCat-2.5",
+    "base_url": "https://api.longcat.chat/anthropic",
+    "session_id": "ecde9156-ecc6-4b04-91c4-60653a39bb5e",
+    "available_tools": [
+      "Read",
+      "Write",
+      "Edit",
+      "Bash",
+      "Glob",
+      "Grep"
+    ],
+    "原始提示词与实际CC会话文本完全一致": true,
+    "追加实现提示词": false,
+    "Codex修改相机HTML": false,
+    "独立核查前后源码SHA256一致": true,
+    "source_sha256": "09ddeb28b9ca3def89c1839aed066a1f350b59576fc8102099c224f48e2ae7ee",
+    "original_prompt_sha256": "3f9e5a9a92c9dc071bf90a6b9df429625435dabcf361d50e2a5bddfd47094071"
+  },
+  "时间": {
+    "本轮开始北京时间": "2026-11-03T21:40:51+08:00",
+    "首次Write_HTML北京时间": "2026-11-03T21:51:39.406000+08:00",
+    "首次Write距本轮启动分钟": 10.81,
+    "本轮总运行分钟": 73.84,
+    "CLI轮数": 157,
+    "说明": "本轮为修正到用户提供的官方接口后的完整运行；此前旧接口失败和环境安装时间单独保留在工作记录中。"
+  },
+  "已核验": {
+    "HTML行数": 715,
+    "独立命名mesh数": 198,
+    "名字及mesh_ID均唯一": true,
+    "CSV与浏览器真实零件名字_所属层_材质逐项一致": true,
+    "外部资源URL": [
+      "https://unpkg.com/three@0.160.0/build/three.module.js"
+    ],
+    "单按钮实际点击循环": [
+      1,
+      2,
+      3,
+      4,
+      1
+    ],
+    "结构图终态抽样包围盒无正体积重叠": true,
+    "合体开机抽样屏幕和灯光已亮": true,
+    "三轮规定截图均存在且被LongCat读取": true,
+    "单次工具输入文本最大行数": 260,
+    "运行期间未观察到新依赖安装": [
+      {
+        "log": "2026-11-03T13_40_58_231Z-debug-0.log",
+        "reify_mentions": 0,
+        "placeDep_mentions": 0,
+        "install_mentions": 0,
+        "exit_0": true
+      }
+    ]
+  },
+  "流程偏差": [
+    {
+      "项目": "后续使用 Edit 分块修改",
+      "状态": "未严格遵守",
+      "证据": "存在使用 Bash/Python 读取并重写 index.html 的修改命令。",
+      "识别到的命令序号": [
+        38,
+        56,
+        62,
+        66,
+        68,
+        71,
+        80,
+        82,
+        86,
+        93,
+        96,
+        98,
+        100,
+        105,
+        107,
+        108,
+        109,
+        112,
+        114,
+        123,
+        125,
+        130,
+        136,
+        143,
+        145
+      ],
+      "计数边界": "命令识别含失败尝试，不等于成功修改次数。"
+    },
+    {
+      "项目": "每块写完立即运行截图",
+      "状态": "未严格遵守",
+      "证据": "存在连续多次 HTML 修改之后才调用截图的情况。",
+      "相邻修改序号样例": [
+        [
+          19,
+          20
+        ],
+        [
+          24,
+          25
+        ],
+        [
+          25,
+          26
+        ],
+        [
+          26,
+          27
+        ],
+        [
+          27,
+          28
+        ],
+        [
+          28,
+          29
+        ],
+        [
+          29,
+          30
+        ],
+        [
+          30,
+          31
+        ],
+        [
+          31,
+          32
+        ],
+        [
+          37,
+          38
+        ],
+        [
+          48,
+          50
+        ],
+        [
+          50,
+          52
+        ]
+      ]
+    },
+    {
+      "项目": "三轮截图尺寸1600×1000",
+      "状态": "未遵守",
+      "证据": "LongCat 的六张规定截图均为1500×900；verification/下另存Codex独立核查的1600×1000截图，不算LongCat原流程达标。"
+    },
+    {
+      "项目": "初始骨架2–3个零件",
+      "状态": "存在轻微偏差",
+      "实际初始P调用数": 4
+    }
+  ],
+  "自查报告需纠正或保留的边界": [
+    {
+      "项目": "完整螺旋牙纹",
+      "核查": "螺丝外观可见齿纹，但 screwGeo 使用 LatheGeometry 旋转对称车削轮廓，形成环状齿纹近似，并非随角度抬升的真实连续螺旋；self-check.md 的完整螺旋/螺旋升程描述不准确。",
+      "源码行": 170
+    },
+    {
+      "项目": "全程无穿模",
+      "核查": "未完成连续动画的精确网格碰撞验证。包围球指示值为0不能直接当作全程无穿模证明；独立检查只覆盖所列抽样帧。"
+    },
+    {
+      "项目": "②取景范围",
+      "核查": "1600×1000、阶段②t=12秒抽样中，顶壳和主框架底板有顶点超出画面；阶段②终态和③终态抽样未发现此问题。"
+    },
+    {
+      "项目": "控制台",
+      "核查": "独立抽样未见JS运行异常；存在非阻断的/favicon.ico 404。"
+    }
+  ],
+  "抽样核查": {
+    "stage2-mid": {
+      "stage": 2,
+      "stage_time": 12,
+      "part_count": 198,
+      "unique_names": 198,
+      "unique_mesh_ids": 198,
+      "js_or_non_favicon_errors": 0,
+      "favicon_404_events": 1,
+      "clipped_parts": [
+        "顶壳",
+        "主框架底板"
+      ],
+      "positive_volume_aabb_overlap_candidates": 108,
+      "camera_inside_solid_box_parts": [],
+      "power": 0,
+      "light_intensity": 0,
+      "lcd_color": [
+        0.04,
+        0.04,
+        0.04
+      ],
+      "screenshot": "verification/stage2-mid.png"
+    },
+    "stage2-end": {
+      "stage": 2,
+      "stage_time": 23,
+      "part_count": 198,
+      "unique_names": 198,
+      "unique_mesh_ids": 198,
+      "js_or_non_favicon_errors": 0,
+      "favicon_404_events": 1,
+      "clipped_parts": [],
+      "positive_volume_aabb_overlap_candidates": 46,
+      "camera_inside_solid_box_parts": [],
+      "power": 0,
+      "light_intensity": 0,
+      "lcd_color": [
+        0.04,
+        0.04,
+        0.04
+      ],
+      "screenshot": "verification/stage2-end.png"
+    },
+    "stage3": {
+      "stage": 3,
+      "stage_time": 6,
+      "part_count": 198,
+      "unique_names": 198,
+      "unique_mesh_ids": 198,
+      "js_or_non_favicon_errors": 0,
+      "favicon_404_events": 1,
+      "clipped_parts": [],
+      "positive_volume_aabb_overlap_candidates": 0,
+      "camera_inside_solid_box_parts": [],
+      "power": 0,
+      "light_intensity": 0,
+      "lcd_color": [
+        0.04,
+        0.04,
+        0.04
+      ],
+      "screenshot": "verification/stage3.png"
+    },
+    "stage4-poweron": {
+      "stage": 4,
+      "stage_time": 23,
+      "part_count": 198,
+      "unique_names": 198,
+      "unique_mesh_ids": 198,
+      "js_or_non_favicon_errors": 0,
+      "favicon_404_events": 1,
+      "clipped_parts": [],
+      "positive_volume_aabb_overlap_candidates": 380,
+      "camera_inside_solid_box_parts": [],
+      "power": 0.9999974258727157,
+      "light_intensity": 13.99996396221802,
+      "lcd_color": [
+        0.999997528837807,
+        0.999997528837807,
+        0.999997528837807
+      ],
+      "screenshot": "verification/stage4-poweron.png"
+    }
+  },
+  "碰撞数据解释": "AABB候选重叠不等于真实网格相交；②中途和④合体状态包含仍在装配位置的零件，不能把候选数量作为穿模数量。相机检查只排除了所列抽样中相机进入实心BoxGeometry的情况。",
+  "LongCat原始三轮截图": [
+    {
+      "file": "shots/round1/stage2.png",
+      "width": 1500,
+      "height": 900,
+      "sha256": "61f1d0bb62be9e5317930422b05c85477d25d4afe4476dcbef544aa17758c9bc",
+      "read_by_longcat": true
+    },
+    {
+      "file": "shots/round1/stage3.png",
+      "width": 1500,
+      "height": 900,
+      "sha256": "6648c325b46e1bb58e1303d85c62c3940727fca58f2cc0b6576b5bfabe346fb2",
+      "read_by_longcat": true
+    },
+    {
+      "file": "shots/round2/stage2.png",
+      "width": 1500,
+      "height": 900,
+      "sha256": "0cbe7a9c0bb9292dcf1c87f720daeaf19f278f145a49fd54fe2445f8a25ea17b",
+      "read_by_longcat": true
+    },
+    {
+      "file": "shots/round2/stage3.png",
+      "width": 1500,
+      "height": 900,
+      "sha256": "a3531217c2414ee98775b6c9e645235306d1e469d00fb026c784423f130c5761",
+      "read_by_longcat": true
+    },
+    {
+      "file": "shots/round3/stage2.png",
+      "width": 1500,
+      "height": 900,
+      "sha256": "6152dd2db1d430bbe9208782ea819e6994a97d6a2a631b59c7d70ae036afedc5",
+      "read_by_longcat": true
+    },
+    {
+      "file": "shots/round3/stage3.png",
+      "width": 1500,
+      "height": 900,
+      "sha256": "8ddd93ee535f8e29745444745d810fba0a2813f78d64257b94a01d5bc0e229e4",
+      "read_by_longcat": true
+    }
+  ],
+  "文件归属": {
+    "index.html_parts.csv_self-check.md_shots_shot.sh": "LongCat生成，未由Codex修改",
+    "verification_与本报告及ZIP": "Codex独立核查和打包，未改动相机源码"
+  },
+  "计费说明": "Claude Code 对自定义模型的费用基准标记为 unknown；本报告不把其美元估算视为 LongCat 实际账单。"
+}

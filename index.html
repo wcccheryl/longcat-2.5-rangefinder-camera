@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>旁轴相机 · 代码建模 / 爆炸视图</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;height:100%;background:#0b0d10;overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  #ui{position:fixed;left:18px;top:16px;z-index:10;color:#dfe6ee;
+    display:flex;flex-direction:column;gap:9px;user-select:none}
+  #stageBtn{cursor:pointer;border:1px solid #3a4350;background:#161b22;color:#e8eef6;
+    padding:11px 16px;font:600 14px ui-monospace,Menlo,monospace;border-radius:9px;
+    letter-spacing:.4px;text-align:left}
+  #stageBtn:hover{background:#1f2630;border-color:#5a6673}
+  #stageBtn:active{transform:translateY(1px)}
+  .pill{font-size:12px;color:#93a3b6;background:rgba(18,23,29,.85);padding:6px 10px;
+    border-radius:8px;border:1px solid #232b35;width:max-content}
+  .pill b{color:#ffd479;font-weight:600}
+  #bar{width:230px;height:5px;background:#1c232c;border-radius:3px;overflow:hidden}
+  #barFill{height:100%;width:0%;background:linear-gradient(90deg,#4fc3f7,#ffd479)}
+  #errlog{position:fixed;left:0;bottom:0;right:0;max-height:32%;overflow:auto;background:#3a0d0d;
+    color:#ffb4b4;font:11px/1.45 monospace;padding:6px 10px;display:none;white-space:pre-wrap;z-index:99}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="ui">
+  <button id="stageBtn">▶ 切换动画阶段</button>
+  <div class="pill" id="stageName">阶段 1/4 · 整机静止展示</div>
+  <div class="pill" id="partInfo">零件 0 · 层 0</div>
+  <div id="bar"><div id="barFill"></div></div>
+</div>
+<div id="errlog"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ============ 0. 错误捕获 / URL 参数 ============
+const Q = new URLSearchParams(location.search);
+const errs = [];
+function logErr(m){
+  errs.push(String(m));
+  const d = document.getElementById('errlog');
+  d.style.display = 'block';
+  d.textContent = errs.join('\n');
+}
+window.addEventListener('error', e => logErr('ERROR: ' + (e.message || e.error)));
+window.addEventListener('unhandledrejection', e => logErr('REJECT: ' + e.reason));
+
+// ============ 1. 渲染器 / 场景 / 相机 ============
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.3;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d1117);
+scene.fog = new THREE.Fog(0x0d1117, 1200, 3200);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.5, 5000);
+camera.position.set(190, 62, 250);
+
+const model = new THREE.Group();
+scene.add(model);
+
+// ============ 2. 灯光 / 环境反射 / 地面 ============
+scene.add(new THREE.HemisphereLight(0xa8c0dc, 0x1a1d22, 0.95));
+const key = new THREE.DirectionalLight(0xffffff, 2.3);
+key.position.set(190, 280, 170);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -400; key.shadow.camera.right = 400;
+key.shadow.camera.top = 400;   key.shadow.camera.bottom = -400;
+key.shadow.camera.near = 10;   key.shadow.camera.far = 1200;
+key.shadow.bias = -0.0006;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x8fb4ff, 1.5);  rim.position.set(-240, 130, -200); scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffe2bd, 0.9); fill.position.set(-90, 70, 250);   scene.add(fill);
+const under = new THREE.DirectionalLight(0xaac4e0, 0.5); under.position.set(40, -180, 120); scene.add(under);
+
+function makeEnvTexture(){
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0.00, '#e8eef6'); grad.addColorStop(0.42, '#6b7686');
+  grad.addColorStop(0.62, '#2c323c'); grad.addColorStop(1.00, '#0c0e12');
+  g.fillStyle = grad; g.fillRect(0, 0, 512, 256);
+  g.fillStyle = 'rgba(255,255,255,0.95)';
+  g.fillRect(56, 26, 128, 58); g.fillRect(316, 18, 96, 48); g.fillRect(208, 84, 62, 30);
+  g.fillStyle = 'rgba(190,215,255,0.55)'; g.fillRect(0, 150, 512, 22);
+  const t = new THREE.CanvasTexture(c);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+scene.environment = makeEnvTexture();
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(1800, 72),
+  new THREE.MeshStandardMaterial({ color: 0x161b21, roughness: 0.95, metalness: 0.0, transparent: true })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -50;
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ============ 3. 材质库 ============
+const MAT = {
+  '黑铬合金': new THREE.MeshStandardMaterial({ color: 0x2b2e33, metalness: 0.85, roughness: 0.36 }),
+  '银色镀铬': new THREE.MeshStandardMaterial({ color: 0xd9dde2, metalness: 1.0,  roughness: 0.20 }),
+  '铝原色':   new THREE.MeshStandardMaterial({ color: 0x9aa1a8, metalness: 1.0,  roughness: 0.42 }),
+  '黄铜':     new THREE.MeshStandardMaterial({ color: 0xc9a227, metalness: 1.0,  roughness: 0.30 }),
+  '钢':       new THREE.MeshStandardMaterial({ color: 0x878d94, metalness: 1.0,  roughness: 0.26 }),
+  '橡胶':     new THREE.MeshStandardMaterial({ color: 0x14161a, metalness: 0.0,  roughness: 0.95 }),
+  '饰皮':     new THREE.MeshStandardMaterial({ color: 0x22252a, metalness: 0.05, roughness: 0.90 }),
+  '玻璃':     new THREE.MeshPhysicalMaterial({ color: 0xa8cbe8, metalness: 0, roughness: 0.06,
+                 transparent: true, opacity: 0.30, envMapIntensity: 0.9 }),
+  '光学玻璃': new THREE.MeshPhysicalMaterial({ color: 0x8fb8e8, metalness: 0, roughness: 0.03,
+                 transparent: true, opacity: 0.42, envMapIntensity: 0.8, roughness: 0.06 }),
+  '反光镜':   new THREE.MeshStandardMaterial({ color: 0xeaf3ff, metalness: 1.0, roughness: 0.05 }),
+  'PCB':      new THREE.MeshStandardMaterial({ color: 0x0d5c36, metalness: 0.25, roughness: 0.55 }),
+  '芯片':     new THREE.MeshStandardMaterial({ color: 0x141414, metalness: 0.45, roughness: 0.45 }),
+  '铜线':     new THREE.MeshStandardMaterial({ color: 0xb87333, metalness: 1.0, roughness: 0.35 }),
+  '塑料':     new THREE.MeshStandardMaterial({ color: 0x2c3138, metalness: 0.10, roughness: 0.70 }),
+  '红色LED':  new THREE.MeshStandardMaterial({ color: 0x2a0505, emissive: 0xff2211, emissiveIntensity: 0 }),
+  '匀光板':   new THREE.MeshStandardMaterial({ color: 0xdfe9f2, emissive: 0xbfe9ff, emissiveIntensity: 0, roughness: 0.6 }),
+  '排线':     new THREE.MeshStandardMaterial({ color: 0xc77b2e, metalness: 0.3, roughness: 0.55 }),
+  '哑黑':     new THREE.MeshStandardMaterial({ color: 0x070708, metalness: 0.0, roughness: 0.96 }),
+};
+const backlightMat = MAT['匀光板'];
+
+function makeLCDTexture(){
+  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#070b0f'; g.fillRect(0, 0, 256, 128);
+  g.fillStyle = '#7fd8ff'; g.font = 'bold 32px monospace';
+  g.fillText('M  f/2.8', 18, 48);
+  g.font = '20px monospace'; g.fillStyle = '#bfe9ff';
+  g.fillText('1/250  ISO400', 18, 82);
+  g.fillStyle = '#ff4444'; g.beginPath(); g.arc(232, 24, 9, 0, 7); g.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const lcdMat = new THREE.MeshBasicMaterial({ map: makeLCDTexture(), color: 0x0d0d0d });
+MAT['LCD'] = lcdMat;
+const ledMat = MAT['红色LED'];
+
+// ============ 4. 几何辅助函数 ============
+const V2 = a => a.map(p => new THREE.Vector2(p[0], p[1]));
+function lathe(pts, seg = 32){ return new THREE.LatheGeometry(V2(pts), seg); }
+function box(w, h, d){ return new THREE.BoxGeometry(w, h, d); }
+function cyl(rt, rb, h, seg = 28){ return new THREE.CylinderGeometry(rt, rb, h, seg); }
+function zcyl(rt, rb, h, seg = 28){ const g = cyl(rt, rb, h, seg); g.rotateX(Math.PI / 2); return g; }
+function zlathe(pts, seg = 32){ const g = lathe(pts, seg); g.rotateX(Math.PI / 2); return g; }
+function torus(r, t, seg = 32, ts = 12){ return new THREE.TorusGeometry(r, t, ts, seg); }
+function sph(r, ws = 24, hs = 16){ return new THREE.SphereGeometry(r, ws, hs); }
+
+// 螺纹：螺旋凸棱 + 法兰头，一次车削成型（单 mesh）
+function screwGeo(r = 1.8, len = 7, head = 2.0, pitch = 0.55, seg = 20){
+  const pts = [[0, -len / 2], [r * 0.80, -len / 2]];
+  const n = Math.max(2, Math.round(len / pitch));
+  for (let i = 0; i < n; i++){
+    const y0 = -len / 2 + (i + 0.45) * (len / n);
+    const y1 = -len / 2 + (i + 1.00) * (len / n);
+    pts.push([r, y0], [r * 0.72, y1]);
+  }
+  pts.push([r * 1.45, len / 2], [r * 1.45, len / 2 + head], [r * 0.95, len / 2 + head], [0, len / 2 + head]);
+  return lathe(pts, seg);
+}
+// 滚花旋钮
+function knurlGeo(r = 8, h = 4, ridges = 36, seg = 48){
+  const pts = [[0, -h / 2], [r * 0.94, -h / 2]];
+  for (let i = 0; i < ridges; i++){
+    pts.push([r, -h / 2 + (i + 0.5) * h / ridges], [r * 0.94, -h / 2 + (i + 1) * h / ridges]);
+  }
+  pts.push([r * 0.94, h / 2], [0, h / 2]);
+  return lathe(pts, seg);
+}
+// 齿轮
+function gearGeo(r = 5, h = 2.5, teeth = 18){
+  const s = new THREE.Shape(), inner = r * 0.78;
+  for (let i = 0; i < teeth * 4; i++){
+    const a = i / (teeth * 4) * Math.PI * 2;
+    const rr = (i % 4 === 1 || i % 4 === 2) ? r : inner;
+    const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+    i ? s.lineTo(x, y) : s.moveTo(x, y);
+  }
+  s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, { depth: h, bevelEnabled: false });
+  g.translate(0, 0, -h / 2);
+  return g;
+}
+// 弹簧（螺旋管）
+function springGeo(r = 2.5, len = 12, coils = 9, tube = 0.35){
+  const pts = [];
+  for (let i = 0; i <= coils * 12; i++){
+    const t = i / (coils * 12), a = t * coils * Math.PI * 2;
+    pts.push(new THREE.Vector3(Math.cos(a) * r, -len / 2 + t * len, Math.sin(a) * r));
+  }
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), coils * 12, tube, 6, false);
+}
+// 导线
+function wireGeo(pts, tube = 0.35){
+  return new THREE.TubeGeometry(
+    new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(p[0], p[1], p[2]))), 24, tube, 6, false);
+}
+// 环形垫圈
+function ringGeo(rOut, rIn, h, seg = 44){
+  return zlathe([[rIn, -h / 2], [rOut, -h / 2], [rOut, h / 2], [rIn, h / 2], [rIn, -h / 2]], seg);
+}
+
+// ============ 5. 零件注册表 ============
+const PARTS = [], LAYERS = [];
+const rnd = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+function P(name, layer, mat, geo, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0){
+  const m = new THREE.Mesh(geo, mat instanceof THREE.Material ? mat : (MAT[mat] || MAT['钢']));
+  m.name = name;
+  m.position.set(x, y, z);
+  m.rotation.set(rx, ry, rz);
+  m.castShadow = m.receiveShadow = true;
+  const i = PARTS.length;
+  m.userData = {
+    layer, idx: i,
+    matName: (typeof mat === 'string') ? mat : (mat === lcdMat ? 'LCD' : (mat === ledMat ? '红色LED' : '定制')),
+    home: m.position.clone(), homeRot: new THREE.Euler(rx, ry, rz),
+    tumble: new THREE.Euler((rnd(i) - .5) * 0.28, (rnd(i + 500) - .5) * 0.9, (rnd(i + 900) - .5) * 0.28),
+    explode: new THREE.Vector3(), diagram: new THREE.Vector3(),
+  };
+  model.add(m); PARTS.push(m);
+  if (!LAYERS.includes(layer)) LAYERS.push(layer);
+  return m;
+}
+
+// ============ 6.1 镜头（32 件，光轴 y=-8，沿 +Z） ============
+function dome(r, dir = 1, seg = 48, cap = 0.5){
+  const g = new THREE.SphereGeometry(r, seg, Math.floor(seg * cap * 0.9) + 2, 0, Math.PI * 2, 0, cap * Math.PI * 0.5);
+  g.rotateX(dir * Math.PI / 2); return g;
+}
+P('镜头主筒', '镜头', '黑铬合金', zcyl(26, 26, 22), 0, -8, 38);
+P('镜头后筒', '镜头', '黑铬合金', zcyl(23, 23, 9), 0, -8, 24);
+P('镜头后组', '镜头', '黑铬合金', zcyl(19, 19, 6), 0, -8, 22);
+P('内镜筒', '镜头', '哑黑', zcyl(20, 20, 14), 0, -8, 30);
+P('对焦环', '镜头', '饰皮', knurlGeo(28, 10, 44), 0, -8, 44, Math.PI / 2);
+P('光圈环', '镜头', '黑铬合金', knurlGeo(27, 7, 40), 0, -8, 31, Math.PI / 2);
+P('前压圈', '镜头', '银色镀铬', ringGeo(27, 23, 3, 48), 0, -8, 50);
+P('前镜片', '镜头', '光学玻璃', dome(22, 1, 48, 0.22), 0, -8, 50);
+P('后镜片', '镜头', '光学玻璃', dome(17, -1, 48, 0.30), 0, -8, 26);
+P('遮光罩', '镜头', '黑铬合金', zlathe([[24, -7], [28, 7], [27, 7], [23, -7], [24, -7]], 56), 0, -8, 55);
+P('滤镜环', '镜头', '银色镀铬', ringGeo(25, 21, 2, 44), 0, -8, 52);
+P('距离窗', '镜头', '玻璃', box(11, 1.4, 7), 0, 18.6, 40);
+P('镜头铭牌', '镜头', '银色镀铬', box(15, 3, 0.8), 0, 19.4, 44);
+P('卡口法兰', '镜头', '钢', ringGeo(26.5, 23, 2.5, 48), 0, -8, 18);
+P('快门帘', '镜头', '哑黑', zcyl(19, 19, 0.8, 48), 0, -8, 17);
+P('密封圈', '镜头', '橡胶', torus(27.5, 0.9), 0, -8, 51);
+P('镜片隔圈1', '镜头', '铝原色', ringGeo(22, 19, 1, 40), 0, -8, 34);
+P('镜片隔圈2', '镜头', '铝原色', ringGeo(22, 19, 1, 40), 0, -8, 46);
+P('光圈弹簧', '镜头', '钢', springGeo(3, 5, 6, 0.3), 15, 4, 28, Math.PI / 2);
+P('光圈轴', '镜头', '钢', cyl(1.2, 1.2, 5), 17, 6, 29);
+P('对焦凸轮', '镜头', '黄铜', cyl(5, 5, 3), 13, -8, 27);
+P('对焦杆', '镜头', '钢', box(10, 2, 2), 9, -8, 25, 0, 0.5, 0);
+for (let k = 0; k < 3; k++){
+  const a = k * Math.PI * 2 / 3 + 0.5;
+  P('卡口爪' + (k + 1), '镜头', '钢', box(6, 4, 2.5), Math.cos(a) * 25, -8 + Math.sin(a) * 25, 17.5, 0, -a, 0);
+}
+for (let k = 0; k < 8; k++){
+  const a = k * Math.PI / 4;
+  P('光圈叶片' + (k + 1), '镜头', '黑铬合金', box(9, 13, 0.25),
+    Math.cos(a) * 11, -8 + Math.sin(a) * 11, 29, 0, 0, a + 0.7);
+}
+
+// ============ 6.2 顶盖控制（16 件，装在顶壳上表面 y=45.5） ============
+P('快门速度转盘', '顶盖控制', '银色镀铬', knurlGeo(9, 4, 30), 38, 49, 0);
+P('快门转盘轴', '顶盖控制', '钢', cyl(3, 3, 6), 38, 45, 0);
+P('快门按钮', '顶盖控制', '银色镀铬', cyl(3.2, 3.6, 3), 54, 48.5, 8);
+P('快门按钮轴', '顶盖控制', '钢', cyl(1.2, 1.2, 5), 54, 45, 8);
+P('过片扳手', '顶盖控制', '银色镀铬', box(34, 1.6, 7), 50, 48.5, -6, 0, 0.35, 0);
+P('扳手毂', '顶盖控制', '钢', cyl(6, 6, 3), 54, 46.5, -6);
+P('回片旋钮', '顶盖控制', '银色镀铬', knurlGeo(6, 5, 24), -52, 48.5, 0);
+P('回片轴', '顶盖控制', '钢', cyl(2, 2, 8), -52, 44, 0);
+P('计数器窗', '顶盖控制', '玻璃', box(9, 1.4, 6), -12, 45.6, 4);
+P('ISO转盘', '顶盖控制', '黑铬合金', knurlGeo(7, 3, 28), -32, 47, 8);
+P('自拍扳手', '顶盖控制', '钢', box(14, 1.5, 3), -8, 47.5, -10, 0, 0.5, 0);
+P('自拍轴', '顶盖控制', '钢', cyl(2.5, 2.5, 3), -14, 46, -8);
+P('热靴', '顶盖控制', '铝原色', box(16, 2, 14), 0, 46.5, 0);
+P('热靴触点1', '顶盖控制', '黄铜', cyl(1.2, 1.2, 1), -4, 47.6, 0);
+P('热靴触点2', '顶盖控制', '黄铜', cyl(1.2, 1.2, 1), 0, 47.6, 0);
+P('热靴触点3', '顶盖控制', '黄铜', cyl(1.2, 1.2, 1), 4, 47.6, 0);
+
+// ============ 6.3 背面部件（15 件，z=-16 一侧） ============
+P('取景目镜框', '背面部件', '黑铬合金', ringGeo(8, 6.5, 2, 36), 0, 26, -17.5);
+P('取景目镜', '背面部件', '黑铬合金', zcyl(7, 7, 4), 0, 26, -18);
+P('目镜玻璃', '背面部件', '光学玻璃', zcyl(5, 5, 1), 0, 26, -19);
+P('屈光度轮', '背面部件', '饰皮', knurlGeo(8.5, 2.5, 26), 0, 26, -19.5, Math.PI / 2);
+P('胶片舱门', '背面部件', '黑铬合金', box(110, 55, 1.5), 0, 0, -17);
+P('舱门铰链', '背面部件', '钢', cyl(2, 2, 20), -58, 0, -18, 0, 0, Math.PI / 2);
+P('舱门铰链销', '背面部件', '钢', cyl(0.8, 0.8, 24), -58, 0, -18, 0, 0, Math.PI / 2);
+P('压片板', '背面部件', '钢', box(100, 22, 1), 0, -8, -8);
+P('压片板弹簧', '背面部件', '钢', springGeo(3, 8, 8, 0.35), 35, -8, -8, 0, 0, Math.PI / 2);
+P('回片叉', '背面部件', '钢', box(4, 10, 3), -52, 14, -10);
+P('回片释放按钮', '背面部件', '银色镀铬', cyl(3, 3, 2), -62, 32, -17);
+P('铭牌', '背面部件', '银色镀铬', box(44, 7, 1), 0, -28, -17.6);
+P('LCD屏幕', '背面部件', 'LCD', box(30, 20, 1), 26, 4, -17.6);
+P('LCD背光板', '背面部件', '匀光板', box(28, 18, 0.5), 26, 4, -16.6);
+P('指示灯', '背面部件', '红色LED', cyl(2, 2, 1), 26, 17, -17.6, Math.PI / 2);
+
+// ============ 6.4 外壳（21 件） ============
+P('底壳', '外壳', '黑铬合金', box(140, 8, 34), 0, -41.5, 0);
+P('顶壳', '外壳', '银色镀铬', box(140, 8, 34), 0, 41.5, 0);
+P('前面板', '外壳', '黑铬合金', box(140, 75, 3), 0, 0, 14.5);
+P('背板', '外壳', '黑铬合金', box(140, 75, 3), 0, 0, -14.5);
+P('左侧壳', '外壳', '黑铬合金', box(4, 75, 32), -70, 0, 0);
+P('右侧壳', '外壳', '黑铬合金', box(4, 75, 32), 70, 0, 0);
+P('镜头卡口环', '外壳', '钢', ringGeo(31, 27.5, 3, 56), 0, -8, 16);
+P('三脚架螺孔座', '外壳', '钢', cyl(8, 8, 3), 0, -46, 0);
+P('三脚架螺孔环', '外壳', '钢', lathe([[5, -1], [8, -1], [8, 1], [5, 1], [5, -1]], 32), 0, -47.5, 0);
+P('背带耳L', '外壳', '钢', torus(4, 1.6), -72, 22, 0, 0, Math.PI / 2);
+P('背带耳R', '外壳', '钢', torus(4, 1.6), 72, 22, 0, 0, Math.PI / 2);
+P('前饰皮', '外壳', '饰皮', box(100, 55, 0.8), 0, 0, 16.4);
+P('后饰皮', '外壳', '饰皮', box(90, 50, 0.8), 0, 0, -16.4);
+P('镜头释放按钮', '外壳', '银色镀铬', zcyl(4, 4, 3), 48, -8, 16);
+P('镜头释放杆', '外壳', '钢', box(8, 3, 2), 42, -2, 16);
+P('取景窗框', '外壳', '黑铬合金', box(22, 12, 1), 0, 26, 15.8);
+P('取景窗玻璃', '外壳', '玻璃', box(20, 10, 1), 0, 26, 16.4);
+P('测距发射窗', '外壳', '玻璃', zcyl(5, 5, 1), -31, 26, 16.4);
+P('测距接收窗', '外壳', '玻璃', zcyl(5, 5, 1), 31, 26, 16.4);
+P('机身编号牌', '外壳', '银色镀铬', box(20, 4, 0.6), 0, -30, 16.4);
+
+// ============ 6.5 取景光学（15 件，位于机身顶部 y≈26） ============
+P('取景反光镜', '取景光学', '反光镜', box(24, 16, 0.6), 0, 26, 4, -0.6);
+P('分光棱镜', '取景光学', '玻璃', box(10, 8, 8), 14, 26, 2, 0, 0.4);
+P('测距反光镜', '取景光学', '反光镜', cyl(6, 6, 1), -30, 26, 6, Math.PI / 2);
+P('测距轮', '取景光学', '钢', gearGeo(5, 2, 16), -30, 26, 0);
+P('测距杆', '取景光学', '钢', box(12, 2, 2), -20, 26, 0);
+P('测距连杆', '取景光学', '钢', box(20, 1.5, 1.5), -8, 22, 0);
+P('测距凸轮', '取景光学', '黄铜', cyl(4, 4, 2), -2, 26, 0);
+P('取景框', '取景光学', '塑料', box(20, 12, 0.6), 0, 26, -4);
+P('亮框照明窗', '取景光学', '玻璃', box(8, 6, 1), 18, 26, -2);
+P('框线遮光框', '取景光学', '塑料', box(26, 18, 0.6), 0, 26, -8);
+P('目镜透镜组', '取景光学', '光学玻璃', zcyl(5, 5, 2), 0, 26, -10);
+P('半透镜', '取景光学', '玻璃', box(12, 10, 0.6), 8, 26, 6, 0, 0.5);
+P('测距接收器', '取景光学', '芯片', box(4, 4, 2), -30, 26, 10);
+P('光学支架', '取景光学', '铝原色', box(34, 2, 22), 0, 14, 2);
+P('取景目镜座', '取景光学', '黑铬合金', cyl(8, 8, 4), 0, 26, -12);
+
+// ============ 6.6 机芯（40 件，机身内部） ============
+P('主框架底板', '机芯', '铝原色', box(130, 3, 26), 0, -31, 0);
+P('主框架顶板', '机芯', '铝原色', box(130, 3, 26), 0, 31, 0);
+for (let k = 0; k < 4; k++)
+  P('框架侧柱' + (k + 1), '机芯', '铝原色', cyl(3.5, 3.5, 58), (k < 2 ? -63 : 63), 0, (k % 2 ? -10 : 10));
+P('快门前帘', '机芯', '橡胶', box(58, 26, 0.5), -30, 0, 3);
+P('快门后帘', '机芯', '橡胶', box(58, 26, 0.5), 30, 0, 3);
+P('快门鼓1', '机芯', '钢', cyl(6, 6, 28), -66, 0, 3, 0, 0, Math.PI / 2);
+P('快门鼓2', '机芯', '钢', cyl(6, 6, 28), 66, 0, 3, 0, 0, Math.PI / 2);
+P('快门弹簧', '机芯', '钢', springGeo(2.5, 10, 8, 0.3), -66, 10, 3, 0, 0, Math.PI / 2);
+P('快门速度凸轮', '机芯', '钢', gearGeo(4, 2, 14), 40, 30, 0);
+P('胶片齿轮', '机芯', '钢', gearGeo(6, 3, 22), 58, -8, 0);
+P('卷片轴', '机芯', '钢', cyl(2, 2, 16), 58, -8, 0);
+P('收片轴', '机芯', '钢', cyl(8, 8, 24), 52, -8, -6);
+P('收片轴槽1', '机芯', '塑料', box(17, 24, 1), 52, -8, -6);
+P('收片轴槽2', '机芯', '塑料', box(1, 24, 17), 52, -8, -6);
+P('收片齿轮', '机芯', '钢', gearGeo(5, 2, 16), 52, -8, 8);
+P('卷片摇臂', '机芯', '钢', box(16, 3, 4), 30, 20, -6);
+P('卷片连杆', '机芯', '钢', box(20, 2, 2), 10, 26, -6);
+P('计数齿轮1', '机芯', '钢', gearGeo(4, 2, 14), -20, 28, -4);
+P('计数齿轮2', '机芯', '钢', gearGeo(3, 1.5, 12), -12, 30, -4);
+P('计数蜗杆', '机芯', '钢', screwGeo(1.5, 8, 0.8), -28, 30, -4, 0, 0, Math.PI / 2);
+P('上导轨', '机芯', '钢', box(120, 2, 4), 0, 15, 6);
+P('下导轨', '机芯', '钢', box(120, 2, 4), 0, -15, 6);
+P('片仓壁', '机芯', '塑料', box(4, 50, 20), -60, 0, -2);
+P('压片滚轮1', '机芯', '橡胶', cyl(3, 3, 8), 40, 10, -6, Math.PI / 2);
+P('压片滚轮2', '机芯', '橡胶', cyl(3, 3, 8), 40, -10, -6, Math.PI / 2);
+P('测距连杆2', '机芯', '钢', box(14, 1.5, 1.5), -18, 18, 2);
+P('自拍齿轮', '机芯', '钢', gearGeo(3.5, 2, 12), -8, 20, -8);
+P('自拍杠杆', '机芯', '钢', box(12, 2, 3), -2, 16, -8);
+P('闪光同步插座', '机芯', '黄铜', cyl(3, 3, 3), -40, 20, 8);
+P('卷片棘轮', '机芯', '钢', gearGeo(5, 2, 18), 48, 26, -2);
+P('卷片棘爪', '机芯', '钢', box(8, 2, 2), 42, 30, -2);
+P('回片齿轮', '机芯', '钢', gearGeo(4, 2, 16), -52, 10, -6);
+P('回片连杆', '机芯', '钢', box(18, 2, 2), -40, 16, -6);
+P('电池仓', '机芯', '塑料', box(20, 14, 16), -40, -20, -4);
+P('卷片轴套', '机芯', '钢', cyl(3, 3, 10), 52, -14, -6);
+P('快门线螺孔', '机芯', '黄铜', cyl(2.5, 2.5, 2), -40, 32, 8);
+P('收片轴销', '机芯', '钢', cyl(1.5, 1.5, 14), 52, -8, -6);
+
+// ============ 6.7 电子（32 件） ============
+P('主电路板', '电子', 'PCB', box(90, 2, 20), 0, -28, -4);
+P('副电路板', '电子', 'PCB', box(40, 2, 14), -40, 30, -4);
+P('测光传感器', '电子', '芯片', box(6, 6, 2), 20, 20, 10);
+P('测光窗', '电子', '玻璃', cyl(5, 5, 1), 20, 26, 10);
+P('主芯片', '电子', '芯片', box(12, 2, 12), -10, -28, -4);
+P('电源芯片', '电子', '芯片', box(8, 2, 8), 15, -28, -8);
+P('取景芯片', '电子', '芯片', box(6, 2, 6), -30, 30, -4);
+P('闪光芯片', '电子', '芯片', box(6, 2, 6), 30, -28, 0);
+const CAP_POS = [[-30, -27, -8], [-22, -27, 0], [0, -27, 4], [22, -27, -2], [32, -27, 6], [-2, -27, -10]];
+CAP_POS.forEach((q, i) => P('电容' + (i + 1), '电子', '塑料', cyl(2, 2, 4), q[0], q[1], q[2]));
+const RES_POS = [[-34, -27, 4], [-16, -27, 6], [6, -27, -8], [18, -27, 6], [28, -27, -6], [-6, -27, 8], [12, -27, 2], [-26, -27, -4]];
+RES_POS.forEach((q, i) => P('电阻' + (i + 1), '电子', '塑料', cyl(1, 1, 3), q[0], q[1], q[2], 0, 0, Math.PI / 2));
+P('电感', '电子', '铜线', torus(3, 1.2), 8, -27, 0);
+P('晶振', '电子', '钢', box(5, 2, 3), -20, -27, -8);
+P('电池', '电子', '钢', cyl(7, 7, 24), -40, -20, -4, 0, 0, Math.PI / 2);
+P('电池触点+', '电子', '黄铜', box(3, 2, 4), -26, -20, -4);
+P('电池触点-', '电子', '黄铜', box(3, 2, 4), -54, -20, -4);
+P('马达', '电子', '钢', cyl(8, 8, 14), 30, -20, -4, 0, 0, Math.PI / 2);
+P('马达齿轮', '电子', '钢', gearGeo(4, 2, 12), 40, -20, -4);
+P('蜂鸣器', '电子', '塑料', cyl(5, 5, 3), 0, 30, 8);
+P('柔性排线', '电子', '排线', box(30, 0.5, 8), 10, -26, 6);
+P('柔性排线2', '电子', '排线', box(20, 0.5, 6), -30, 28, 2);
+
+// ============ 6.8 紧固件（27 件，全部带螺纹） ============
+const SG = (r, l, h) => screwGeo(r, l, h, 0.55);
+[[62, 12], [62, -12], [-62, 12], [-62, -12]].forEach((q, i) =>
+  P('顶壳螺丝' + (i + 1), '紧固件', '钢', SG(2.0, 6, 2.2), q[0], 46.5, q[1]));
+[[62, 12], [62, -12], [-62, 12], [-62, -12]].forEach((q, i) =>
+  P('底壳螺丝' + (i + 1), '紧固件', '钢', SG(2.0, 6, 2.2), q[0], -46.5, q[1], Math.PI));
+[[64, 30], [64, -30], [-64, 30], [-64, -30]].forEach((q, i) =>
+  P('前面板螺丝' + (i + 1), '紧固件', '钢', SG(1.8, 5, 2.0), q[0], q[1], 17, Math.PI / 2));
+[[64, 30], [64, -30], [-64, 30], [-64, -30]].forEach((q, i) =>
+  P('背板螺丝' + (i + 1), '紧固件', '钢', SG(1.8, 5, 2.0), q[0], q[1], -17, -Math.PI / 2));
+for (let k = 0; k < 4; k++){
+  const a = k * Math.PI / 2 + Math.PI / 4;
+  P('卡口螺丝' + (k + 1), '紧固件', '钢', SG(1.6, 4, 1.8),
+    Math.cos(a) * 29, -8 + Math.sin(a) * 29, 17.5, Math.PI / 2);
+}
+P('侧板螺丝L', '紧固件', '钢', SG(1.5, 2.6, 1.7), -71, 0, 0, 0, 0, Math.PI / 2);
+P('侧板螺丝R', '紧固件', '钢', SG(1.5, 2.6, 1.7), 71, 0, 0, 0, 0, -Math.PI / 2);
+P('电路板螺丝1', '紧固件', '钢', SG(1.4, 3, 1.6), -20, -28, -4);
+P('电路板螺丝2', '紧固件', '钢', SG(1.4, 3, 1.6), 10, -28, -4);
+P('三脚架螺丝', '紧固件', '钢', SG(3.2, 9, 3.4), 0, -48, 0, Math.PI);
+P('饰皮螺丝1', '紧固件', '钢', SG(1.4, 4, 1.6), -50, 29, 17, Math.PI / 2);
+P('饰皮螺丝2', '紧固件', '钢', SG(1.4, 4, 1.6), 50, 29, 17, Math.PI / 2);
+
+// ============ 7. 布局：飞出云(尺寸感知+松弛防穿插) / 平面结构图(货架排列) ============
+const CENTER = new THREE.Vector3(0, 2, 0);
+const LAYER_ORDER = ['镜头', '顶盖控制', '背面部件', '外壳', '取景光学', '机芯', '电子', '紧固件'];
+const LAYER_ARC  = { '镜头': 8, '顶盖控制': 26, '背面部件': 10, '外壳': 20, '取景光学': 38, '机芯': 48, '电子': 48, '紧固件': 30 };
+function layerIndex(l){ const i = LAYER_ORDER.indexOf(l); return i < 0 ? LAYER_ORDER.length : i; }
+
+// 旋转后的轴对齐包围盒（保证按实际朝向计算占位）
+const _rb = new THREE.Box3(), _rv = new THREE.Vector3();
+function rotBBox(mesh){
+  const bb = mesh.geometry.boundingBox;
+  _rb.makeEmpty();
+  for (let i = 0; i < 8; i++){
+    _rv.set((i & 1) ? bb.max.x : bb.min.x, (i & 2) ? bb.max.y : bb.min.y, (i & 4) ? bb.max.z : bb.min.z);
+    _rv.applyEuler(mesh.userData.homeRot);
+    _rb.expandByPoint(_rv);
+  }
+  return _rb;
+}
+
+function computeLayout(){
+  const byLayer = {};
+  PARTS.forEach(p => {
+    const L = p.userData.layer;
+    (byLayer[L] = byLayer[L] || []).push(p);
+    p.geometry.computeBoundingBox();
+    p.geometry.computeBoundingSphere();
+  });
+  const vtmp = new THREE.Vector3();
+
+  // ---- 阶段②：径向爆炸云。沿零件自身装配方向飞出，距离随尺寸/外扩程度递增 ----
+  const items = [...PARTS];
+  items.forEach((p, i) => {
+    const u = p.userData, h = u.home, b = p.geometry.boundingSphere.radius;
+    const jit = new THREE.Vector3(rnd(i * 3 + 1) - .5, rnd(i * 3 + 2) - .5, rnd(i * 3 + 3) - .5).multiplyScalar(0.5);
+    const dir = h.clone().sub(CENTER);
+    dir.add(jit);
+    if (dir.lengthSq() < 1e-4) dir.set(rnd(i + 7) - .5, rnd(i + 11) - .5, rnd(i + 13) - .5);
+    dir.normalize();
+    const along = Math.max(0, h.clone().sub(CENTER).dot(dir));
+    u.explode.copy(h).addScaledVector(dir, 20 + b * 0.38 + along * 0.1);
+    u.explode.y += h.y * 0.5;
+  });
+  // 松弛：把互相穿插的零件成对推开
+  const sorted = [...items].sort((a, b) => b.geometry.boundingSphere.radius - a.geometry.boundingSphere.radius);
+  for (let iter = 0; iter < 30; iter++){
+    for (let i = 0; i < sorted.length; i++){
+      const A = sorted[i], va = A.userData.explode, ba = A.geometry.boundingSphere.radius;
+      for (let j = i + 1; j < sorted.length; j++){
+        const B = sorted[j], vb = B.userData.explode;
+        const min = (ba + B.geometry.boundingSphere.radius) * 1.04;
+        const d = va.distanceTo(vb);
+        if (d < min && d > 1e-4){
+          const push = (min - d) * 0.5;
+          vtmp.copy(vb).sub(va).normalize();
+          va.addScaledVector(vtmp, -push);
+          vb.addScaledVector(vtmp, push);
+        }
+      }
+    }
+  }
+  // 量化检查结果（显示在面板上，便于自查）
+  let worst = 0;
+  for (let i = 0; i < sorted.length; i++){
+    const A = sorted[i], ba = A.geometry.boundingSphere.radius;
+    for (let j = i + 1; j < sorted.length; j++){
+      const B = sorted[j];
+      const min = (ba + B.geometry.boundingSphere.radius) * 1.04;
+      const d = A.userData.explode.distanceTo(B.userData.explode);
+      if (d < min) worst = Math.max(worst, (min - d) / min);
+    }
+  }
+  window.__explodeOverlap = +worst.toFixed(3);
+  const eb = new THREE.Box3();
+  for (const p of PARTS) eb.expandByPoint(p.userData.explode);
+  window.__explodeBox = eb;
+
+  // ---- 阶段③：平面结构图。按层分带，带内货架式排列，按旋转后真实占地面积布点 ----
+  const GAP = 12, ROW_W = 620, PLANE_Y = -46, BAND_GAP = 26;
+  const bands = LAYERS.map(L => {
+    const arr = (byLayer[L] || []).map(p => {
+      const bb = rotBBox(p);
+      return { p, w: (bb.max.x - bb.min.x) + GAP, d: (bb.max.z - bb.min.z) + GAP,
+               minY: bb.min.y, maxY: bb.max.y };
+    }).sort((a, b) => b.d - a.d || b.w - a.w);
+    let x = 0, z = 0, rowH = 0;
+    const rows = [];
+    let row = [];
+    arr.forEach(it => {
+      if (x + it.w > ROW_W && row.length){ rows.push({ z, h: rowH, row }); z += rowH; x = 0; rowH = 0; row = []; }
+      it.cx = x + it.w / 2;
+      x += it.w; rowH = Math.max(rowH, it.d);
+      row.push(it);
+    });
+    if (row.length){ rows.push({ z, h: rowH, row }); z += rowH; }
+    return { rows, depth: z };
+  });
+  const totalDepth = bands.reduce((s, b) => s + b.depth, 0) + BAND_GAP * (bands.length - 1);
+  let zc = -totalDepth / 2;
+  bands.forEach(band => {
+    band.rows.forEach(r => {
+      const rowW = r.row.reduce((s, it) => Math.max(s, it.cx + it.w / 2), 0);
+      r.row.forEach(it => {
+        it.p.userData.diagram.set(it.cx - rowW / 2, PLANE_Y - it.minY, zc + r.z + r.h / 2);
+      });
+    });
+    zc += band.depth + BAND_GAP;
+  });
+}
+computeLayout();
+
+// ============ 8. 动画状态机 ============
+const N = PARTS.length;
+const DT2 = 0.10, DUR2 = 1.6;      // 拆解：零件间隔 / 单个时长
+const DT4 = 0.08, DUR4 = 1.4;      // 合体：反向
+const SPREAD3 = 4.2;               // 爆炸视图展开时长
+const T_END2 = (N - 1) * DT2 + DUR2;
+const T_END4 = (N - 1) * DT4 + DUR4;
+const state = { stage: 1, stageTime: 0, totalTime: 0 };
+const clamp01 = v => Math.min(1, Math.max(0, v));
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const smooth = t => t * t * (3 - 2 * t);
+const tmpV = new THREE.Vector3();
+
+function updateParts(){
+  const t = state.stageTime, st = state.stage;
+  for (const p of PARTS){
+    const u = p.userData;
+    if (st === 1){ p.position.copy(u.home); p.rotation.copy(u.homeRot); continue; }
+    if (st === 2){
+      const e = easeOut(clamp01((t - u.idx * DT2) / DUR2));
+      tmpV.lerpVectors(u.home, u.explode, e);
+      tmpV.y += Math.sin(e * Math.PI) * (LAYER_ARC[u.layer] || 20) * 0.55;
+      p.position.copy(tmpV);
+      p.rotation.set(u.homeRot.x + u.tumble.x * e, u.homeRot.y + u.tumble.y * e, u.homeRot.z + u.tumble.z * e);
+    } else if (st === 3){
+      const e = smooth(clamp01(t / SPREAD3)), te = 1 - e;
+      tmpV.lerpVectors(u.explode, u.diagram, e);
+      p.position.copy(tmpV);
+      p.rotation.set(u.homeRot.x + u.tumble.x * te, u.homeRot.y + u.tumble.y * te, u.homeRot.z + u.tumble.z * te);
+    } else {
+      const e = easeInOut(clamp01((t - (N - 1 - u.idx) * DT4) / DUR4));
+      tmpV.lerpVectors(u.diagram, u.home, e);
+      p.position.copy(tmpV);
+      p.rotation.set(u.homeRot.x + u.tumble.x * (1 - e), u.homeRot.y + u.tumble.y * (1 - e), u.homeRot.z + u.tumble.z * (1 - e));
+    }
+  }
+}
+
+// ---- 相机跟随：距离/高度/视场随阶段进度推移（相机始终跟着动画走） ----
+const CAM_KEYS = {
+  1: { d: [330, 240],  h: [80, 62],   ly: [4, 4],    fov: [42, 42] },
+  2: { d: [240, 700],  h: [62, 235],  ly: [4, -10],  fov: [42, 48] },
+  3: { d: [620, 700],  h: [195, 780], ly: [0, -46],  fov: [44, 38] },
+  4: { d: [700, 330],  h: [780, 80],  ly: [-46, 4],  fov: [38, 42] },
+};
+const cam = { d: 330, h: 80, ly: 4, fov: 42 };
+let spin = 0;
+const innerLight = new THREE.PointLight(0xff4422, 0, 120, 1.6);
+innerLight.position.set(26, 5, -22);   // 开机后从背面 LCD 周围透出暖光
+scene.add(innerLight);
+
+function camProgress(){
+  const t = state.stageTime;
+  if (state.stage === 1) return smooth(clamp01(t / 6));
+  if (state.stage === 2) return smooth(clamp01(t / T_END2));
+  if (state.stage === 3) return smooth(clamp01(t / SPREAD3));
+  return smooth(clamp01(t / T_END4));
+}
+function updateCamera(){
+  const K = CAM_KEYS[state.stage], pr = camProgress();
+  cam.d = K.d[0] + (K.d[1] - K.d[0]) * pr;
+  cam.h = K.h[0] + (K.h[1] - K.h[0]) * pr;
+  cam.ly = K.ly[0] + (K.ly[1] - K.ly[0]) * pr;
+  cam.fov = K.fov[0] + (K.fov[1] - K.fov[0]) * pr;
+  const azBase = Q.has('az') ? (+Q.get('az') || 0) : state.totalTime * 0.05;
+  const az = azBase + (state.stage === 2 ? state.stageTime * 0.03 : 0);
+  const h = Q.has('h') ? (+Q.get('h')) : cam.h;
+  const d = Q.has('d') ? (+Q.get('d')) : cam.d;
+  const ly = Q.has('ly') ? (+Q.get('ly')) : cam.ly;
+  camera.position.set(Math.cos(az) * d, h, Math.sin(az) * d);
+  camera.lookAt(0, ly, 0);
+  if (Math.abs(camera.fov - cam.fov) > 0.01){ camera.fov = cam.fov; camera.updateProjectionMatrix(); }
+}
+function updateSpin(dt){
+  if (state.stage === 1){
+    spin += (1 - spin) * (1 - Math.exp(-dt * 1.2));
+    model.rotation.y += spin * dt * 0.16;
+  } else if (state.stage === 3){
+    // 结构图需要横平竖直：把累计自转缓动回 0
+    model.rotation.y += (0 - model.rotation.y) * (1 - Math.exp(-dt * 2.2));
+    spin = 0;
+  } else {
+    spin = 0;
+  }
+}
+
+// ---- 开机效果 ----
+let power = 0;
+function updatePower(dt){
+  const on = (state.stage === 1) || (state.stage === 4 && state.stageTime > T_END4);
+  power += ((on ? 1 : 0) - power) * (1 - Math.exp(-dt * 2.2));
+  ledMat.emissiveIntensity = power * 3.4;
+  lcdMat.color.setScalar(0.04 + power * 0.96);
+  backlightMat.emissiveIntensity = power * 1.6;
+  innerLight.intensity = power * 14.0;
+}
+
+// ---- UI ----
+const STAGE_NAMES = ['', '整机静止展示', '拆解 · 零件按装配顺序飞出', '爆炸视图 · 结构图', '合体 · 开机'];
+const elName = document.getElementById('stageName');
+const elInfo = document.getElementById('partInfo');
+const elBar = document.getElementById('barFill');
+function updateUI(){
+  elName.textContent = '阶段 ' + state.stage + '/4 · ' + STAGE_NAMES[state.stage];
+  elInfo.textContent = '零件 ' + N + ' · 层 ' + LAYERS.length + ' · 云团穿插 ' + (window.__explodeOverlap || 0);
+  let pr = 0;
+  if (state.stage === 2) pr = clamp01(state.stageTime / T_END2);
+  else if (state.stage === 3) pr = clamp01(state.stageTime / SPREAD3);
+  else if (state.stage === 4) pr = clamp01(state.stageTime / (T_END4 + 2));
+  elBar.style.width = (pr * 100).toFixed(1) + '%';
+}
+function setStage(n){
+  state.stage = n; state.stageTime = 0;
+  const K = CAM_KEYS[n];
+  cam.d = K.d[0]; cam.h = K.h[0]; cam.ly = K.ly[0]; cam.fov = K.fov[0];
+  updateUI();
+}
+document.getElementById('stageBtn').addEventListener('click', () => setStage(state.stage % 4 + 1));
+window.addEventListener('keydown', e => { if (e.key >= '1' && e.key <= '4') setStage(+e.key); });
+
+function updateFloor(){
+  const pr = camProgress();
+  let y = -50, op = 1;
+  if (state.stage === 2){ y = -50 - 560 * pr; op = 1 - clamp01(pr * 1.5); }
+  else if (state.stage === 3){ y = -610 + 560 * pr; op = pr; }
+  ground.position.y = y;
+  ground.material.opacity = op;
+}
+function step(dt, ui = true){
+  state.totalTime += dt; state.stageTime += dt;
+  updateSpin(dt); updateParts(); updatePower(dt); updateCamera(); updateFloor();
+  if (ui) updateUI();
+}
+function seekTo(t){
+  const h = 1 / 60;
+  for (let x = 0; x < t; x += h) step(Math.min(h, t - x), false);
+  updateUI();
+}
+
+// ============ 9. 启动：正常循环 / 冻结截图 / CSV 导出 ============
+if (Q.has('csv')){
+  document.body.textContent =
+    'name,layer,material\n' + PARTS.map(p => p.name + ',' + p.userData.layer + ',' + p.userData.matName).join('\n');
+  window.__ready = true;
+} else if (Q.has('freeze')){
+  setStage(+(Q.get('stage')) || 1);
+  seekTo(+(Q.get('t')) || 0);
+  updateCamera();
+  renderer.render(scene, camera);
+  window.__frozen = true;
+} else {
+  const clock = new THREE.Clock();
+  (function loop(){
+    requestAnimationFrame(loop);
+    step(Math.min(clock.getDelta(), 0.05));
+    renderer.render(scene, camera);
+  })();
+}
+window.__ready = true;
+</script>
+</body>
+</html>
